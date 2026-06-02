@@ -14,7 +14,8 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
@@ -33,7 +34,6 @@ def find_pandoc() -> str | None:
     found = shutil.which("pandoc")
     if found:
         return found
-
     candidates = [
         Path(os.environ.get("LOCALAPPDATA", "")) / "Pandoc" / "pandoc.exe",
         Path(os.environ.get("ProgramFiles", "")) / "Pandoc" / "pandoc.exe",
@@ -49,14 +49,8 @@ def install_pandoc() -> str:
     if os.name == "nt":
         if shutil.which("winget"):
             run([
-                "winget",
-                "install",
-                "--id",
-                "JohnMacFarlane.Pandoc",
-                "-e",
-                "--silent",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
+                "winget", "install", "--id", "JohnMacFarlane.Pandoc", "-e", "--silent",
+                "--accept-package-agreements", "--accept-source-agreements",
             ])
         elif shutil.which("choco"):
             run(["choco", "install", "pandoc", "-y"])
@@ -78,11 +72,69 @@ def install_pandoc() -> str:
             run(["sudo", "pacman", "-S", "--noconfirm", "pandoc"])
         else:
             raise RuntimeError("Pandoc is missing and no supported Linux package manager was found.")
-
     pandoc = find_pandoc()
     if not pandoc:
         raise RuntimeError("Pandoc installation completed, but pandoc was not found on PATH.")
     return pandoc
+
+
+def escape_yaml(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def heading_text(line: str, level: int) -> str | None:
+    match = re.match(rf"^#{{{level}}}\s+(.+?)\s*$", line)
+    return match.group(1).strip() if match else None
+
+
+def normalized(text: str) -> str:
+    return re.sub(r"\s+", "", text).strip("：:").lower()
+
+
+def is_toc_heading(line: str) -> bool:
+    match = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+    return bool(match and normalized(match.group(1)) in {"目录", "contents", "tableofcontents"})
+
+
+def preprocess_markdown(input_path: Path, output_path: Path) -> bool:
+    """Make # the document title and map Markdown ##/###/#### to Word H1/H2/H3."""
+    lines = input_path.read_text(encoding="utf-8").splitlines()
+    title = None
+    subtitle = None
+    body: list[str] = []
+    seen_body = False
+    has_toc = False
+
+    for line in lines:
+        top_title = heading_text(line, 1)
+        if top_title and not seen_body and title is None:
+            title = top_title
+            continue
+        if top_title and not seen_body and subtitle is None:
+            subtitle = top_title
+            continue
+        if is_toc_heading(line):
+            has_toc = True
+            continue
+
+        if line.strip():
+            seen_body = True
+
+        heading = re.match(r"^(#{2,6})(\s+.+)$", line)
+        if heading:
+            hashes, rest = heading.groups()
+            body.append(hashes[1:] + rest)
+        else:
+            body.append(line)
+
+    header = ["---"]
+    if title:
+        header.append(f'title: "{escape_yaml(title)}"')
+    if subtitle:
+        header.append(f'subtitle: "{escape_yaml(subtitle)}"')
+    header.extend(["---", ""])
+    output_path.write_text("\n".join(header + body) + "\n", encoding="utf-8")
+    return has_toc
 
 
 def set_run_font(run, size_pt=12, cn_font=FONT_CN, en_font=FONT_EN, bold=False):
@@ -168,12 +220,11 @@ def create_reference_docx(path: Path):
                     line=None, before=6, after=6, align=WD_ALIGN_PARAGRAPH.CENTER)
     configure_style(doc, "TOC Heading", size=18, cn_font=FONT_CN, en_font=FONT_EN,
                     bold=True, line=None, before=6, after=18, align=WD_ALIGN_PARAGRAPH.CENTER)
+    for name in ("TOC 1", "TOC 2", "TOC 3"):
+        configure_style(doc, name, size=12, cn_font=FONT_CN, en_font=FONT_EN,
+                        line=22, align=WD_ALIGN_PARAGRAPH.JUSTIFY)
     doc.add_paragraph("Reference document for Pandoc styles.")
     doc.save(path)
-
-
-def normalized(text: str) -> str:
-    return re.sub(r"\s+", "", text).lower()
 
 
 def paragraph_kind(paragraph, mode: str) -> tuple[str, str]:
@@ -185,11 +236,11 @@ def paragraph_kind(paragraph, mode: str) -> tuple[str, str]:
         return "title_cn", mode
     if style == "Subtitle":
         return "title_en", mode
-    if norm in {"摘要", "中文摘要", "摘要:"}:
+    if norm in {"摘要", "中文摘要"}:
         return "abstract_title_cn", "abstract_cn"
     if norm in {"abstract", "英文摘要"}:
         return "abstract_title_en", "abstract_en"
-    if norm in {"目录", "contents", "tableofcontents"}:
+    if norm in {"目录", "contents", "tableofcontents"} or style == "TOC Heading":
         return "toc_title", "body"
     if norm in {"参考文献", "references"}:
         return "heading1", "refs"
@@ -199,6 +250,8 @@ def paragraph_kind(paragraph, mode: str) -> tuple[str, str]:
         return "keywords_en", mode
     if re.match(r"^(图|figure|表|table)\s*[\d一二三四五六七八九十]+", text, re.I):
         return "caption", mode
+    if style.startswith("TOC "):
+        return "toc_entry", mode
     if style == "Heading 1":
         return "heading1", "body"
     if style == "Heading 2":
@@ -214,9 +267,98 @@ def paragraph_kind(paragraph, mode: str) -> tuple[str, str]:
     return "body", mode
 
 
+def insert_page_breaks_between_heading1_sections(doc: Document):
+    heading_indices = [
+        idx for idx, paragraph in enumerate(doc.paragraphs)
+        if paragraph.style and paragraph.style.name == "Heading 1"
+    ]
+    for idx in reversed(heading_indices[1:]):
+        previous = doc.paragraphs[idx - 1]
+        previous.add_run().add_break(WD_BREAK.PAGE)
+
+
+def clear_table_borders(table):
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        tbl_pr.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        tag = f"w:{edge}"
+        element = borders.find(qn(tag))
+        if element is None:
+            element = OxmlElement(tag)
+            borders.append(element)
+        element.set(qn("w:val"), "nil")
+
+
+def set_table_edge(table, edge: str, value="single", size="8", color="000000"):
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        tbl_pr.append(borders)
+    element = borders.find(qn(f"w:{edge}"))
+    if element is None:
+        element = OxmlElement(f"w:{edge}")
+        borders.append(element)
+    element.set(qn("w:val"), value)
+    element.set(qn("w:sz"), size)
+    element.set(qn("w:space"), "0")
+    element.set(qn("w:color"), color)
+
+
+def set_cell_border(cell, edge: str, value="single", size="8", color="000000"):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.first_child_found_in("w:tcBorders")
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    element = borders.find(qn(f"w:{edge}"))
+    if element is None:
+        element = OxmlElement(f"w:{edge}")
+        borders.append(element)
+    element.set(qn("w:val"), value)
+    element.set(qn("w:sz"), size)
+    element.set(qn("w:space"), "0")
+    element.set(qn("w:color"), color)
+
+
+def set_cell_margins(cell, margin_twips="36"):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    margins = tc_pr.first_child_found_in("w:tcMar")
+    if margins is None:
+        margins = OxmlElement("w:tcMar")
+        tc_pr.append(margins)
+    for edge in ("top", "left", "bottom", "right"):
+        element = margins.find(qn(f"w:{edge}"))
+        if element is None:
+            element = OxmlElement(f"w:{edge}")
+            margins.append(element)
+        element.set(qn("w:w"), margin_twips)
+        element.set(qn("w:type"), "dxa")
+
+
+def apply_three_line_table(table):
+    clear_table_borders(table)
+    set_table_edge(table, "top", size="12")
+    set_table_edge(table, "bottom", size="12")
+    if table.rows:
+        for cell in table.rows[0].cells:
+            set_cell_border(cell, "bottom", size="8")
+    for row in table.rows:
+        for cell in row.cells:
+            set_cell_margins(cell, "36")
+            for paragraph in cell.paragraphs:
+                set_para(paragraph, before=0, after=0, line=None)
+                apply_font(paragraph, 10.5, FONT_CN, FONT_EN, False)
+
+
 def apply_chinese_article_format(docx_path: Path):
     doc = Document(docx_path)
     mode = "body"
+    insert_page_breaks_between_heading1_sections(doc)
+
     for paragraph in doc.paragraphs:
         if not paragraph.text.strip():
             continue
@@ -246,6 +388,9 @@ def apply_chinese_article_format(docx_path: Path):
         elif kind == "toc_title":
             set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=6, after=18, line=None)
             apply_font(paragraph, 18, FONT_CN, FONT_EN, True)
+        elif kind == "toc_entry":
+            set_para(paragraph, align=WD_ALIGN_PARAGRAPH.JUSTIFY, before=0, after=0, line=22)
+            apply_font(paragraph, 12, FONT_CN, FONT_EN, False)
         elif kind == "heading1":
             set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=12, after=12, line=None)
             apply_font(paragraph, 16, FONT_CN_HEADING, FONT_EN, True)
@@ -272,11 +417,7 @@ def apply_chinese_article_format(docx_path: Path):
             apply_font(paragraph, 12, FONT_CN, FONT_EN, False)
 
     for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    set_para(paragraph, before=3, after=3, line=None)
-                    apply_font(paragraph, 10.5, FONT_CN, FONT_EN, False)
+        apply_three_line_table(table)
 
     doc.save(docx_path)
 
@@ -290,11 +431,14 @@ def convert(markdown_path: Path, output_path: Path, *, install_if_missing: bool 
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        reference_doc = Path(tmp) / "reference.docx"
+        tmp_dir = Path(tmp)
+        reference_doc = tmp_dir / "reference.docx"
+        preprocessed_md = tmp_dir / "input.md"
         create_reference_docx(reference_doc)
-        run([
+        has_toc = preprocess_markdown(markdown_path, preprocessed_md)
+        cmd = [
             pandoc,
-            str(markdown_path),
+            str(preprocessed_md),
             "--from",
             "markdown+pipe_tables+implicit_figures",
             "--to",
@@ -304,7 +448,10 @@ def convert(markdown_path: Path, output_path: Path, *, install_if_missing: bool 
             str(reference_doc),
             "-o",
             str(output_path),
-        ])
+        ]
+        if has_toc:
+            cmd.extend(["--toc", "--toc-depth=3"])
+        run(cmd)
     apply_chinese_article_format(output_path)
 
 

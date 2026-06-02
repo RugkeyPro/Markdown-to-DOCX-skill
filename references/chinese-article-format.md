@@ -2,6 +2,14 @@
 
 Apply all text in black.
 
+## Markdown Heading Mapping
+
+- Markdown `#`: whole-document title, not a Word heading.
+- Markdown `##`: Word Heading 1 / 一级标题.
+- Markdown `###`: Word Heading 2 / 二级标题.
+- Markdown `####`: Word Heading 3 / 三级标题.
+- After one Word Heading 1 section's content ends, insert a page break before the next Word Heading 1 section.
+
 ## Titles
 
 - Chinese title: SimSun/宋体, 二号/22 pt, bold, centered.
@@ -18,13 +26,13 @@ Apply all text in black.
 ## Table Of Contents
 
 - TOC title: SimSun/宋体, 小二/18 pt, bold, centered, single line spacing, spacing before 0.5 line and after 1.5 lines.
-- TOC entries: SimSun/宋体, 小四/12 pt, fixed 22 pt line spacing.
+- TOC entries: SimSun/宋体, 小四/12 pt, fixed 22 pt line spacing, justified alignment.
 
 ## Headings
 
-- Level 1 heading: SimHei/黑体, 三号/16 pt, bold, centered, spacing before 1 line and after 1 line.
-- Level 2 heading: SimHei/黑体, 小四/12 pt, bold, left aligned, spacing before 0.5 line and after 0.5 line.
-- Level 3 heading: SimSun/宋体, 小四/12 pt, bold, left aligned, spacing before 0.5 line and after 0.5 line.
+- Level 1 heading: Markdown `##`; Word Heading 1; SimHei/黑体, 三号/16 pt, bold, centered, spacing before 1 line and after 1 line.
+- Level 2 heading: Markdown `###`; Word Heading 2; SimHei/黑体, 小四/12 pt, bold, left aligned, spacing before 0.5 line and after 0.5 line.
+- Level 3 heading: Markdown `####`; Word Heading 3; SimSun/宋体, 小四/12 pt, bold, left aligned, spacing before 0.5 line and after 0.5 line.
 
 ## Body
 
@@ -38,4 +46,5 @@ Apply all text in black.
 
 - Figure captions: below the figure, centered, SimSun/宋体, 五号/10.5 pt, single line spacing, spacing before 0.5 line and after 0.5 line.
 - Table captions: centered, SimSun/宋体, 五号/10.5 pt, single line spacing, spacing before 0.5 line and after 0.5 line.
-- Text inside tables: single line spacing, spacing before 0.25 line and after 0.25 line.
+- Tables: standard three-line table with only table top border, header-bottom border, and table bottom border. Do not use vertical borders or full grid borders.
+- Text inside tables: single line spacing, spacing before 0 and after 0; use tight cell margins for compact row height.
