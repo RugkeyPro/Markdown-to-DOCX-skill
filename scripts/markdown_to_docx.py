@@ -14,10 +14,13 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 
 FONT_CN = "SimSun"
@@ -106,6 +109,9 @@ def preprocess_markdown(input_path: Path, output_path: Path) -> bool:
     has_toc = False
 
     for line in lines:
+        if line.strip() == "---":
+            continue
+
         top_title = heading_text(line, 1)
         if top_title and not seen_body and title is None:
             title = top_title
@@ -172,12 +178,28 @@ def apply_font(paragraph, size=12, cn_font=FONT_CN, en_font=FONT_EN, bold=False)
         set_run_font(run, size, cn_font, en_font, bold)
 
 
+def remove_style_borders(style):
+    p_pr = style._element.get_or_add_pPr()
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is not None:
+        p_pr.remove(p_bdr)
+
+
+def remove_paragraph_borders(paragraph):
+    p_pr = paragraph._p.get_or_add_pPr()
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is not None:
+        p_pr.remove(p_bdr)
+
+
 def configure_style(doc: Document, name: str, *, size=12, cn_font=FONT_CN, en_font=FONT_EN,
-                    bold=False, before=0, after=0, line=22, align=None):
+                    bold=False, before=0, after=0, line=22, align=None, based_on=None):
     try:
         style = doc.styles[name]
     except KeyError:
         style = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+    if based_on is not None:
+        style.base_style = based_on
     style.font.name = en_font
     style._element.rPr.rFonts.set(qn("w:eastAsia"), cn_font)
     style.font.size = Pt(size)
@@ -194,6 +216,7 @@ def configure_style(doc: Document, name: str, *, size=12, cn_font=FONT_CN, en_fo
         fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     if align is not None:
         fmt.alignment = align
+    remove_style_borders(style)
 
 
 def create_reference_docx(path: Path):
@@ -206,8 +229,11 @@ def create_reference_docx(path: Path):
 
     configure_style(doc, "Normal", size=12, cn_font=FONT_CN, en_font=FONT_EN, line=22)
     configure_style(doc, "Body Text", size=12, cn_font=FONT_CN, en_font=FONT_EN, line=22)
-    configure_style(doc, "Title", size=22, cn_font=FONT_CN, en_font=FONT_EN, bold=True,
-                    line=None, align=WD_ALIGN_PARAGRAPH.CENTER)
+    normal = doc.styles["Normal"]
+    configure_style(doc, "标题", size=22, cn_font=FONT_CN_HEADING, en_font=FONT_EN,
+                    bold=True, line=22, align=WD_ALIGN_PARAGRAPH.CENTER, based_on=normal)
+    configure_style(doc, "Title", size=22, cn_font=FONT_CN_HEADING, en_font=FONT_EN,
+                    bold=True, line=22, align=WD_ALIGN_PARAGRAPH.CENTER, based_on=normal)
     configure_style(doc, "Subtitle", size=18, cn_font=FONT_CN, en_font=FONT_EN, bold=True,
                     line=None, align=WD_ALIGN_PARAGRAPH.CENTER)
     configure_style(doc, "Heading 1", size=16, cn_font=FONT_CN_HEADING, en_font=FONT_EN,
@@ -275,6 +301,92 @@ def insert_page_breaks_between_heading1_sections(doc: Document):
     for idx in reversed(heading_indices[1:]):
         previous = doc.paragraphs[idx - 1]
         previous.add_run().add_break(WD_BREAK.PAGE)
+
+
+def remove_element(element):
+    parent = element.getparent()
+    if parent is not None:
+        parent.remove(element)
+
+
+def paragraph_has_drawing(paragraph) -> bool:
+    return bool(paragraph._p.xpath(".//w:drawing"))
+
+
+def table_has_drawing(table) -> bool:
+    return bool(table._tbl.xpath(".//w:drawing"))
+
+
+def is_caption_text(text: str) -> bool:
+    return bool(re.match(r"^(图|figure|表|table)\s*[\d一二三四五六七八九十]+", text.strip(), re.I))
+
+
+def next_body_paragraph(paragraph) -> Paragraph | None:
+    element = paragraph._p.getnext()
+    if element is not None and element.tag == qn("w:p"):
+        return Paragraph(element, paragraph._parent)
+    return None
+
+
+def move_paragraph_contents(source, target):
+    for child in list(target._p):
+        target._p.remove(child)
+    for child in list(source._p):
+        target._p.append(child)
+
+
+def apply_floating_table_wrap(table):
+    tbl_pr = table._tbl.tblPr
+    tblp_pr = tbl_pr.first_child_found_in("w:tblpPr")
+    if tblp_pr is None:
+        tblp_pr = OxmlElement("w:tblpPr")
+        tbl_pr.insert(0, tblp_pr)
+    tblp_pr.set(qn("w:leftFromText"), "180")
+    tblp_pr.set(qn("w:rightFromText"), "180")
+    tblp_pr.set(qn("w:topFromText"), "120")
+    tblp_pr.set(qn("w:bottomFromText"), "120")
+    tblp_pr.set(qn("w:vertAnchor"), "text")
+    tblp_pr.set(qn("w:horzAnchor"), "margin")
+    tblp_pr.set(qn("w:tblpXSpec"), "center")
+
+
+def format_image_container_table(table):
+    clear_table_borders(table)
+    apply_floating_table_wrap(table)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for row in table.rows:
+        for cell in row.cells:
+            set_cell_margins(cell, "36")
+            for paragraph in cell.paragraphs:
+                if paragraph_has_drawing(paragraph):
+                    set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0, line=None)
+                elif is_caption_text(paragraph.text):
+                    set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=6, after=6, line=None)
+                    apply_font(paragraph, 10.5, FONT_CN, FONT_EN, False)
+
+
+def wrap_images_in_single_cell_tables(doc: Document):
+    for paragraph in list(doc.paragraphs):
+        if not paragraph_has_drawing(paragraph):
+            continue
+
+        caption = next_body_paragraph(paragraph)
+        if caption is not None and not is_caption_text(caption.text):
+            caption = None
+
+        table = doc.add_table(rows=1, cols=1)
+        paragraph._p.addprevious(table._tbl)
+        cell = table.cell(0, 0)
+        image_para = cell.paragraphs[0]
+        move_paragraph_contents(paragraph, image_para)
+
+        if caption is not None:
+            caption_para = cell.add_paragraph()
+            move_paragraph_contents(caption, caption_para)
+            remove_element(caption._p)
+
+        remove_element(paragraph._p)
+        format_image_container_table(table)
 
 
 def clear_table_borders(table):
@@ -357,6 +469,7 @@ def apply_three_line_table(table):
 def apply_chinese_article_format(docx_path: Path):
     doc = Document(docx_path)
     mode = "body"
+    wrap_images_in_single_cell_tables(doc)
     insert_page_breaks_between_heading1_sections(doc)
 
     for paragraph in doc.paragraphs:
@@ -364,8 +477,11 @@ def apply_chinese_article_format(docx_path: Path):
             continue
         kind, mode = paragraph_kind(paragraph, mode)
         if kind == "title_cn":
-            set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=12, line=None)
-            apply_font(paragraph, 22, FONT_CN, FONT_EN, True)
+            if "标题" in [style.name for style in doc.styles]:
+                paragraph.style = doc.styles["标题"]
+            remove_paragraph_borders(paragraph)
+            set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0, line=22)
+            apply_font(paragraph, 22, FONT_CN_HEADING, FONT_EN, True)
         elif kind == "title_en":
             set_para(paragraph, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=12, line=None)
             apply_font(paragraph, 18, FONT_CN, FONT_EN, True)
@@ -417,7 +533,10 @@ def apply_chinese_article_format(docx_path: Path):
             apply_font(paragraph, 12, FONT_CN, FONT_EN, False)
 
     for table in doc.tables:
-        apply_three_line_table(table)
+        if table_has_drawing(table):
+            format_image_container_table(table)
+        else:
+            apply_three_line_table(table)
 
     doc.save(docx_path)
 

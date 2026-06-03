@@ -1,6 +1,6 @@
 ---
 name: markdown-to-docx
-description: Convert Markdown articles into standardized DOCX/Word documents using Pandoc by default, installing Pandoc for the user when it is missing, then applying academic-style typography, spacing, Markdown heading remapping, justified table-of-contents entries, compact three-line tables, page breaks after first-level sections, abstracts, keywords, captions, references, and Chinese-first formatting rules. Use when Codex needs to create a .docx from .md or Markdown text and apply a repeatable Word layout standard, especially for Chinese articles; English-only article rules are not finalized yet.
+description: Convert Markdown articles into standardized DOCX/Word documents using Pandoc by default, installing Pandoc for the user when it is missing, then applying academic-style typography, spacing, Markdown heading remapping, cleanup of Markdown horizontal-rule markers, justified table-of-contents entries, compact three-line tables, picture-in-1x1-table containers with captions, page breaks after first-level sections, abstracts, keywords, captions, references, and Chinese-first formatting rules. Use when Codex needs to create a .docx from .md or Markdown text and apply a repeatable Word layout standard, especially for Chinese articles; English-only article rules are not finalized yet.
 ---
 
 # Markdown To DOCX
@@ -38,6 +38,7 @@ Prefer the Codex bundled Python because it includes `python-docx`. If it is unav
 Accept ordinary Markdown:
 
 - `#` is the whole-document title, not a Word first-level heading.
+- The whole-document title uses Word style `标题`: based on body text, Chinese SimHei/黑体, English Times New Roman, 二号/22 pt, centered, fixed 22 pt line spacing, and no borders.
 - An optional English title can be marked as a second `#` line immediately after the Chinese title, or as `英文题目：...`.
 - Markdown `##` maps to Word Heading 1 / 一级标题.
 - Markdown `###` maps to Word Heading 2 / 二级标题.
@@ -49,6 +50,8 @@ Accept ordinary Markdown:
 - Figure and table captions beginning with `图`, `Figure`, `表`, or `Table` are centered caption paragraphs.
 - `## 参考文献` / `## References` starts the references section; following paragraphs use the reference style.
 - Markdown tables are converted by Pandoc and then normalized into compact three-line tables.
+- Standalone Markdown horizontal-rule/frontmatter separator lines exactly equal to `---` are removed before conversion.
+- Inserted images are converted into a 1x1 borderless table at the insertion position; the image and its immediately following caption are kept inside that table.
 
 ## Formatting Standard
 
@@ -58,6 +61,7 @@ Load `references/chinese-article-format.md` when exact spacing, font size, or pa
 - Body: 小四/12 pt, left aligned, first-line indent 2 Chinese characters, fixed 22 pt line spacing.
 - References: 五号/10.5 pt, fixed 20 pt line spacing, hanging indent 2.5 characters.
 - Tables: standard three-line table, no vertical borders, compact row height, tight internal cell margins.
+- Images: 1x1 borderless table container with floating table wrapping where Word supports it; image and caption remain in the same cell.
 - Each Word Heading 1 section starts on a new page after the preceding Heading 1 section content.
 - Headings, abstracts, keywords, captions, tables, and title rules follow the reference file.
 
@@ -67,8 +71,11 @@ After conversion, open or inspect the DOCX enough to verify:
 
 - The file is not empty and contains the expected title, sections, captions, tables, and references.
 - Markdown `#` became the document title, while Markdown `##` became Word Heading 1.
+- The document title uses style `标题` and has no border.
+- Input `---` marker lines do not appear in the DOCX.
 - Every Heading 1 section after the first starts after a page break.
 - Tables are standard three-line tables and look compact.
+- Images sit inside 1x1 borderless tables with their captions in the same cell.
 - TOC entries are justified and Word may need right-click > update field after opening.
 - Markdown syntax artifacts such as `#`, `**`, and table pipes do not remain in normal prose.
 - Pandoc handled Markdown features such as tables, images, lists, links, and code blocks correctly.

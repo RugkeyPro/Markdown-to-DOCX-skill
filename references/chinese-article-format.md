@@ -5,6 +5,7 @@ Apply all text in black.
 ## Markdown Heading Mapping
 
 - Markdown `#`: whole-document title, not a Word heading.
+- Delete Markdown lines that are exactly `---` before conversion.
 - Markdown `##`: Word Heading 1 / 一级标题.
 - Markdown `###`: Word Heading 2 / 二级标题.
 - Markdown `####`: Word Heading 3 / 三级标题.
@@ -12,7 +13,7 @@ Apply all text in black.
 
 ## Titles
 
-- Chinese title: SimSun/宋体, 二号/22 pt, bold, centered.
+- Whole-document Chinese title: Word style name `标题`; based on body text; Chinese font SimHei/黑体; English font Times New Roman; 二号/22 pt; bold; centered; fixed 22 pt line spacing; no borders or other decorative formatting.
 - English title: Times New Roman, 小二/18 pt, bold, centered.
 
 ## Abstracts And Keywords
@@ -45,6 +46,7 @@ Apply all text in black.
 ## Captions And Tables
 
 - Figure captions: below the figure, centered, SimSun/宋体, 五号/10.5 pt, single line spacing, spacing before 0.5 line and after 0.5 line.
+- Inserted images: create a 1x1 borderless table at the insertion position; put the image and its caption inside the same cell. Use floating/table wrapping where Word supports it so the container behaves like square/四周型 wrapping.
 - Table captions: centered, SimSun/宋体, 五号/10.5 pt, single line spacing, spacing before 0.5 line and after 0.5 line.
 - Tables: standard three-line table with only table top border, header-bottom border, and table bottom border. Do not use vertical borders or full grid borders.
 - Text inside tables: single line spacing, spacing before 0 and after 0; use tight cell margins for compact row height.
